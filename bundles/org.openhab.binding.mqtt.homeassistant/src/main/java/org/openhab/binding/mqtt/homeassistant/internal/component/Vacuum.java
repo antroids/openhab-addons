@@ -15,9 +15,21 @@ package org.openhab.binding.mqtt.homeassistant.internal.component;
 import com.google.gson.annotations.SerializedName;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.mqtt.generic.ChannelStateUpdateListener;
+import org.openhab.binding.mqtt.generic.values.OnOffValue;
+import org.openhab.binding.mqtt.generic.values.PercentageValue;
+import org.openhab.binding.mqtt.generic.values.TextValue;
+import org.openhab.binding.mqtt.generic.values.Value;
+import org.openhab.binding.mqtt.homeassistant.internal.ComponentChannel;
 import org.openhab.binding.mqtt.homeassistant.internal.config.dto.AbstractChannelConfiguration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * A MQTT vacuum component, following the https://www.home-assistant.io/integrations/vacuum.mqtt/ specification.
@@ -29,36 +41,54 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
     public static final String SCHEMA_LEGACY = "legacy";
     public static final String SCHEMA_STATE = "state";
 
-    public static final String COMMAND_TURN_ON = "turn_on"; // Begin cleaning
-    public static final String COMMAND_TURN_OFF = "turn_off"; // Turn the Vacuum off
-    public static final String COMMAND_RETURN_HOME = "return_home"; // Return to base/dock
-    public static final String COMMAND_RETURN_TO_BASE = "return_to_base"; // Return to base/dock
-    public static final String COMMAND_START = "start";
-    public static final String COMMAND_STOP = "stop"; // Stop the Vacuum
-    public static final String COMMAND_CLEAN_SPOT = "clean_spot"; // Initialize a spot cleaning cycle
-    public static final String COMMAND_LOCATE = "locate"; // Locate the vacuum (typically by playing a song)
-    public static final String COMMAND_START_PAUSE = "start_pause"; // Toggle the vacuum between cleaning and stopping
-    public static final String COMMAND_PAUSE = "pause"; // Pause the vacuum
-    public static final String COMMAND_BATTERY = "battery";
-    public static final String COMMAND_STATUS = "status";
-    public static final String COMMAND_FAN_SPEED = "fan_speed";
-    public static final String COMMAND_SEND_COMMAND = "send_command";
+    public static final String TRUE = "true";
+    public static final String FALSE = "false";
 
-    public static final List<String> LEGACY_BASIC_COMMANDS = List.of(COMMAND_TURN_ON, COMMAND_TURN_OFF, COMMAND_STOP,
-            COMMAND_RETURN_TO_BASE, COMMAND_CLEAN_SPOT, COMMAND_LOCATE, COMMAND_START_PAUSE);
-    public static final List<String> LEGACY_DEFAULT_FEATURES = List.of(COMMAND_TURN_ON, COMMAND_TURN_OFF, COMMAND_STOP,
-            COMMAND_RETURN_HOME, COMMAND_BATTERY, COMMAND_STATUS, COMMAND_CLEAN_SPOT);
-    public static final List<String> LEGACY_SUPPORTED_FEATURES = List.of(COMMAND_TURN_ON, COMMAND_TURN_OFF, COMMAND_PAUSE,
-            COMMAND_STOP, COMMAND_RETURN_HOME, COMMAND_BATTERY, COMMAND_STATUS, COMMAND_LOCATE, COMMAND_CLEAN_SPOT,
-            COMMAND_FAN_SPEED, COMMAND_SEND_COMMAND);
+    public static final String FEATURE_TURN_ON = "turn_on"; // Begin cleaning
+    public static final String FEATURE_TURN_OFF = "turn_off"; // Turn the Vacuum off
+    public static final String FEATURE_RETURN_HOME = "return_home"; // Return to base/dock
+    public static final String FEATURE_START = "start";
+    public static final String FEATURE_STOP = "stop"; // Stop the Vacuum
+    public static final String FEATURE_CLEAN_SPOT = "clean_spot"; // Initialize a spot cleaning cycle
+    public static final String FEATURE_LOCATE = "locate"; // Locate the vacuum (typically by playing a song)
+    public static final String FEATURE_PAUSE = "pause"; // Pause the vacuum
+    public static final String FEATURE_BATTERY = "battery";
+    public static final String FEATURE_STATUS = "status";
+    public static final String FEATURE_FAN_SPEED = "fan_speed";
+    public static final String FEATURE_SEND_COMMAND = "send_command";
 
-    public static final List<String> STATE_BASIC_COMMANDS = List.of(COMMAND_START, COMMAND_PAUSE, COMMAND_RETURN_TO_BASE,
-            COMMAND_STOP, COMMAND_CLEAN_SPOT, COMMAND_LOCATE);
-    public static final List<String> STATE_DEFAULT_FEATURES = List.of(COMMAND_START, COMMAND_STOP, COMMAND_RETURN_HOME,
-            COMMAND_STATUS, COMMAND_BATTERY, COMMAND_CLEAN_SPOT);
-    public static final List<String> STATE_SUPPORTED_FEATURES = List.of(COMMAND_START, COMMAND_STOP, COMMAND_PAUSE,
-            COMMAND_RETURN_HOME, COMMAND_BATTERY, COMMAND_STATUS, COMMAND_LOCATE, COMMAND_CLEAN_SPOT, COMMAND_FAN_SPEED,
-            COMMAND_SEND_COMMAND);
+    // State Schema only
+    public static final String STATE_CLEANING = "cleaning";
+    public static final String STATE_DOCKED = "docked";
+    public static final String STATE_PAUSED = "paused";
+    public static final String STATE_IDLE = "idle";
+    public static final String STATE_RETURNING = "returning";
+    public static final String STATE_ERROR = "error";
+
+    public static final String COMMAND_CH_ID = "command";
+    public static final String FAN_SPEED_CH_ID = "fanSpeed";
+    public static final String CUSTOM_COMMAND_CH_ID = "customCommand";
+    public static final String BATTERY_LEVEL_CH_ID = "batteryLevel";
+    public static final String CHARGING_CH_ID = "charging";
+    public static final String CLEANING_CH_ID = "cleaning";
+    public static final String DOCKED_CH_ID = "docked";
+    public static final String ERROR_CH_ID = "error";
+    public static final String JSON_ATTRIBUTES_CH_ID = "jsonAttributes";
+    public static final String STATE_CH_ID = "state";
+
+    public static final List<String> LEGACY_DEFAULT_FEATURES = List.of(FEATURE_TURN_ON, FEATURE_TURN_OFF, FEATURE_STOP,
+            FEATURE_RETURN_HOME, FEATURE_BATTERY, FEATURE_STATUS, FEATURE_CLEAN_SPOT);
+    public static final List<String> LEGACY_SUPPORTED_FEATURES = List.of(FEATURE_TURN_ON, FEATURE_TURN_OFF, FEATURE_PAUSE,
+            FEATURE_STOP, FEATURE_RETURN_HOME, FEATURE_BATTERY, FEATURE_STATUS, FEATURE_LOCATE, FEATURE_CLEAN_SPOT,
+            FEATURE_FAN_SPEED, FEATURE_SEND_COMMAND);
+
+    public static final List<String> STATE_DEFAULT_FEATURES = List.of(FEATURE_START, FEATURE_STOP, FEATURE_RETURN_HOME,
+            FEATURE_STATUS, FEATURE_BATTERY, FEATURE_CLEAN_SPOT);
+    public static final List<String> STATE_SUPPORTED_FEATURES = List.of(FEATURE_START, FEATURE_STOP, FEATURE_PAUSE,
+            FEATURE_RETURN_HOME, FEATURE_BATTERY, FEATURE_STATUS, FEATURE_LOCATE, FEATURE_CLEAN_SPOT, FEATURE_FAN_SPEED,
+            FEATURE_SEND_COMMAND);
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(Vacuum.class);
 
     /**
      * Configuration class for MQTT component
@@ -68,7 +98,7 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
             super("MQTT Vacuum");
         }
 
-        // Legacy MQTT vacuum configuration section.
+        // Legacy and Common MQTT vacuum configuration section.
 
         @SerializedName("battery_level_template")
         protected @Nullable String batteryLevelTemplate;
@@ -117,16 +147,15 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
         @SerializedName("payload_start_pause")
         protected @Nullable String payloadStartPause = "start_pause"; // Legacy only
         @SerializedName("payload_stop")
-        protected @Nullable String payloadStop = "payload_stop";
+        protected @Nullable String payloadStop = "stop";
         @SerializedName("payload_turn_off")
         protected @Nullable String payloadTurnOff = "turn_off";
         @SerializedName("payload_turn_on")
         protected @Nullable String payloadTurnOn = "turn_on";
 
         @SerializedName("schema")
-        protected String schema = SCHEMA_LEGACY;
+        protected Schema schema = Schema.LEGACY;
 
-        // Features as payload
         @SerializedName("send_command_topic")
         protected @Nullable String sendCommandTopic;
 
@@ -134,7 +163,7 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
         protected @Nullable String setFanSpeedTopic;
 
         @SerializedName("supported_features")
-        protected @Nullable List<String> supportedFeatures = LEGACY_DEFAULT_FEATURES;
+        protected @Nullable List<String> supportedFeatures;
 
 
         // State MQTT vacuum configuration section.
@@ -145,8 +174,13 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
         @SerializedName("payload_start")
         protected @Nullable String payloadStart = "start";
 
+        @SerializedName("state_topic")
+        protected @Nullable String stateTopic;
 
-
+        @SerializedName("json_attributes_template")
+        protected @Nullable String jsonAttributesTemplate;
+        @SerializedName("json_attributes_topic")
+        protected @Nullable String jsonAttributesTopic;
     }
 
     /**
@@ -157,5 +191,129 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
      */
     public Vacuum(ComponentFactory.ComponentConfiguration componentConfiguration, Class<ChannelConfiguration> clazz) {
         super(componentConfiguration, clazz);
+        final ChannelStateUpdateListener updateListener = componentConfiguration.getUpdateListener();
+
+        final List<String> supportedFeatures = channelConfiguration.schema == Schema.LEGACY ?
+                LEGACY_SUPPORTED_FEATURES : STATE_SUPPORTED_FEATURES;
+        if (channelConfiguration.supportedFeatures == null) {
+            channelConfiguration.supportedFeatures = channelConfiguration.schema == Schema.LEGACY ?
+                    LEGACY_DEFAULT_FEATURES : STATE_DEFAULT_FEATURES;
+        }
+
+        final List<String> deviceFeatures = supportedFeatures.stream()
+                .filter(channelConfiguration.supportedFeatures::contains).collect(Collectors.toList());
+        if (deviceFeatures.size() != channelConfiguration.supportedFeatures.size()) {
+            LOGGER.warn("Vacuum discovery config has unsupported or duplicated features. Supported: "
+                    + Arrays.toString(supportedFeatures.toArray()) + ", provided: "
+                    + Arrays.toString(channelConfiguration.supportedFeatures.toArray()));
+        }
+
+        final List<String> commands = new ArrayList<>();
+        addPayloadToList(deviceFeatures, FEATURE_CLEAN_SPOT, channelConfiguration.payloadCleanSpot, commands);
+        addPayloadToList(deviceFeatures, FEATURE_LOCATE, channelConfiguration.payloadLocate, commands);
+        addPayloadToList(deviceFeatures, FEATURE_RETURN_HOME, channelConfiguration.payloadReturnToBase, commands);
+        addPayloadToList(deviceFeatures, FEATURE_STOP, channelConfiguration.payloadStop, commands);
+        addPayloadToList(deviceFeatures, FEATURE_TURN_OFF, channelConfiguration.payloadTurnOff, commands);
+        addPayloadToList(deviceFeatures, FEATURE_TURN_ON, channelConfiguration.payloadTurnOn, commands);
+
+        if (channelConfiguration.schema == Schema.LEGACY) {
+            addPayloadToList(deviceFeatures, FEATURE_PAUSE, channelConfiguration.payloadStartPause, commands);
+        } else {
+            addPayloadToList(deviceFeatures, FEATURE_PAUSE, channelConfiguration.payloadPause, commands);
+            addPayloadToList(deviceFeatures, FEATURE_START, channelConfiguration.payloadStart, commands);
+        }
+
+        buildOptionalChannel(COMMAND_CH_ID, new TextValue(commands.toArray(new String[0])), updateListener, null,
+                channelConfiguration.commandTopic, null, null);
+
+        if (deviceFeatures.contains(FEATURE_FAN_SPEED) && channelConfiguration.fanSpeedList != null
+                && !channelConfiguration.fanSpeedList.isEmpty()) {
+            if (channelConfiguration.schema == Schema.LEGACY) {
+                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+                        updateListener, null, channelConfiguration.setFanSpeedTopic,
+                        channelConfiguration.fanSpeedTemplate, channelConfiguration.fanSpeedTopic);
+            } else if (deviceFeatures.contains(FEATURE_STATUS)) {
+                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+                        updateListener, null, channelConfiguration.setFanSpeedTopic,
+                        "{{ value_json.fan_speed }}", channelConfiguration.stateTopic);
+            } else {
+                LOGGER.info("Status feature is disabled, unable to get fan speed.");
+                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+                        updateListener, null, channelConfiguration.setFanSpeedTopic,
+                        null, null);
+            }
+        }
+
+        if (deviceFeatures.contains(FEATURE_SEND_COMMAND)) {
+            buildOptionalChannel(CUSTOM_COMMAND_CH_ID, new TextValue(), updateListener, null,
+                    channelConfiguration.sendCommandTopic, null, null);
+        }
+
+        if (channelConfiguration.schema == Schema.LEGACY) {
+            // I assume, that if when these topic defined in config, then we dont need to check features
+            buildOptionalChannel(BATTERY_LEVEL_CH_ID, new PercentageValue(BigDecimal.ZERO, BigDecimal.valueOf(100),
+                            BigDecimal.ONE, null, null),
+                    updateListener, null, null,
+                    channelConfiguration.batteryLevelTemplate, channelConfiguration.batteryLevelTopic);
+            buildOptionalChannel(CHARGING_CH_ID, new OnOffValue(TRUE, FALSE),
+                    updateListener, null, null,
+                    channelConfiguration.chargingTemplate, channelConfiguration.chargingTopic);
+            buildOptionalChannel(CLEANING_CH_ID, new OnOffValue(TRUE, FALSE),
+                    updateListener, null, null,
+                    channelConfiguration.cleaningTemplate, channelConfiguration.cleaningTopic);
+            buildOptionalChannel(DOCKED_CH_ID, new OnOffValue(TRUE, FALSE),
+                    updateListener, null, null,
+                    channelConfiguration.dockedTemplate, channelConfiguration.dockedTopic);
+            buildOptionalChannel(ERROR_CH_ID, new TextValue(),
+                    updateListener, null, null,
+                    channelConfiguration.errorTemplate, channelConfiguration.errorTopic);
+        } else {
+            if (deviceFeatures.contains(FEATURE_STATUS)) {
+                // state key is mandatory
+                buildOptionalChannel(STATE_CH_ID,
+                        new TextValue(new String[]{
+                                STATE_CLEANING,
+                                STATE_DOCKED,
+                                STATE_PAUSED,
+                                STATE_IDLE,
+                                STATE_RETURNING,
+                                STATE_ERROR}),
+                        updateListener, null, null,
+                        "{{ value_json.state }}", channelConfiguration.stateTopic);
+                if (deviceFeatures.contains(FEATURE_BATTERY)) {
+                    buildOptionalChannel(BATTERY_LEVEL_CH_ID,
+                            new PercentageValue(BigDecimal.ZERO, BigDecimal.valueOf(100), BigDecimal.ONE, null, null),
+                            updateListener, null, null,
+                            "{{ value_json.battery_level }}", channelConfiguration.stateTopic);
+                }
+            }
+        }
+
+        buildOptionalChannel(JSON_ATTRIBUTES_CH_ID, new TextValue(), updateListener, null,
+                null, channelConfiguration.jsonAttributesTemplate, channelConfiguration.jsonAttributesTopic);
+    }
+
+    @Nullable
+    private ComponentChannel buildOptionalChannel(String channelId, Value valueState,
+            ChannelStateUpdateListener channelStateUpdateListener, @Nullable String commandTemplate,
+            @Nullable String commandTopic, @Nullable String stateTemplate, @Nullable String stateTopic) {
+        if ((commandTopic != null && !commandTopic.isBlank()) || (stateTopic != null && !stateTopic.isBlank())) {
+            return buildChannel(channelId, valueState, channelConfiguration.getName(), channelStateUpdateListener)
+                    .stateTopic(stateTopic, stateTemplate, channelConfiguration.getValueTemplate())
+                    .commandTopic(commandTopic, channelConfiguration.isRetain(), channelConfiguration.getQos(),
+                            commandTemplate).build();
+        }
+        return null;
+    }
+
+    private void addPayloadToList(List<String> supportedFeatures, String feature, @Nullable String payload, List<String> list) {
+        if (supportedFeatures.contains(feature) && payload != null && !payload.isEmpty()) {
+            list.add(payload);
+        }
+    }
+
+    public enum Schema {
+        @SerializedName("legacy") LEGACY,
+        @SerializedName("state") STATE
     }
 }
