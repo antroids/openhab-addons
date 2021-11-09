@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,6 +44,7 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
 
     public static final String TRUE = "true";
     public static final String FALSE = "false";
+    public static final String OFF = "off";
 
     public static final String FEATURE_TURN_ON = "turn_on"; // Begin cleaning
     public static final String FEATURE_TURN_OFF = "turn_off"; // Turn the Vacuum off
@@ -187,70 +189,75 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
      * Creates component based on generic configuration and component configuration type.
      *
      * @param componentConfiguration generic componentConfiguration with not parsed JSON config
-     * @param clazz                  target configuration type
      */
-    public Vacuum(ComponentFactory.ComponentConfiguration componentConfiguration, Class<ChannelConfiguration> clazz) {
-        super(componentConfiguration, clazz);
+    public Vacuum(ComponentFactory.ComponentConfiguration componentConfiguration) {
+        super(componentConfiguration, ChannelConfiguration.class);
         final ChannelStateUpdateListener updateListener = componentConfiguration.getUpdateListener();
 
-        final List<String> supportedFeatures = channelConfiguration.schema == Schema.LEGACY ?
+        final var allowedSupportedFeatures = channelConfiguration.schema == Schema.LEGACY ?
                 LEGACY_SUPPORTED_FEATURES : STATE_SUPPORTED_FEATURES;
-        if (channelConfiguration.supportedFeatures == null) {
-            channelConfiguration.supportedFeatures = channelConfiguration.schema == Schema.LEGACY ?
-                    LEGACY_DEFAULT_FEATURES : STATE_DEFAULT_FEATURES;
-        }
+        final var configSupportedFeatures = channelConfiguration.supportedFeatures == null ? channelConfiguration.schema == Schema.LEGACY ?
+                LEGACY_DEFAULT_FEATURES : STATE_DEFAULT_FEATURES : channelConfiguration.supportedFeatures;
+        List<String> deviceSupportedFeatures = Collections.emptyList();
 
-        final List<String> deviceFeatures = supportedFeatures.stream()
-                .filter(channelConfiguration.supportedFeatures::contains).collect(Collectors.toList());
-        if (deviceFeatures.size() != channelConfiguration.supportedFeatures.size()) {
+        if (!configSupportedFeatures.isEmpty()) {
+            deviceSupportedFeatures = allowedSupportedFeatures.stream().filter(configSupportedFeatures::contains)
+                    .collect(Collectors.toList());
+        }
+        if (deviceSupportedFeatures.size() != configSupportedFeatures.size()) {
             LOGGER.warn("Vacuum discovery config has unsupported or duplicated features. Supported: "
-                    + Arrays.toString(supportedFeatures.toArray()) + ", provided: "
-                    + Arrays.toString(channelConfiguration.supportedFeatures.toArray()));
+                    + Arrays.toString(allowedSupportedFeatures.toArray()) + ", provided: "
+                    + Arrays.toString(configSupportedFeatures.toArray()));
         }
 
         final List<String> commands = new ArrayList<>();
-        addPayloadToList(deviceFeatures, FEATURE_CLEAN_SPOT, channelConfiguration.payloadCleanSpot, commands);
-        addPayloadToList(deviceFeatures, FEATURE_LOCATE, channelConfiguration.payloadLocate, commands);
-        addPayloadToList(deviceFeatures, FEATURE_RETURN_HOME, channelConfiguration.payloadReturnToBase, commands);
-        addPayloadToList(deviceFeatures, FEATURE_STOP, channelConfiguration.payloadStop, commands);
-        addPayloadToList(deviceFeatures, FEATURE_TURN_OFF, channelConfiguration.payloadTurnOff, commands);
-        addPayloadToList(deviceFeatures, FEATURE_TURN_ON, channelConfiguration.payloadTurnOn, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_CLEAN_SPOT, channelConfiguration.payloadCleanSpot, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_LOCATE, channelConfiguration.payloadLocate, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_RETURN_HOME, channelConfiguration.payloadReturnToBase, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_STOP, channelConfiguration.payloadStop, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_TURN_OFF, channelConfiguration.payloadTurnOff, commands);
+        addPayloadToList(deviceSupportedFeatures, FEATURE_TURN_ON, channelConfiguration.payloadTurnOn, commands);
 
         if (channelConfiguration.schema == Schema.LEGACY) {
-            addPayloadToList(deviceFeatures, FEATURE_PAUSE, channelConfiguration.payloadStartPause, commands);
+            addPayloadToList(deviceSupportedFeatures, FEATURE_PAUSE, channelConfiguration.payloadStartPause, commands);
         } else {
-            addPayloadToList(deviceFeatures, FEATURE_PAUSE, channelConfiguration.payloadPause, commands);
-            addPayloadToList(deviceFeatures, FEATURE_START, channelConfiguration.payloadStart, commands);
+            addPayloadToList(deviceSupportedFeatures, FEATURE_PAUSE, channelConfiguration.payloadPause, commands);
+            addPayloadToList(deviceSupportedFeatures, FEATURE_START, channelConfiguration.payloadStart, commands);
         }
 
         buildOptionalChannel(COMMAND_CH_ID, new TextValue(commands.toArray(new String[0])), updateListener, null,
                 channelConfiguration.commandTopic, null, null);
 
-        if (deviceFeatures.contains(FEATURE_FAN_SPEED) && channelConfiguration.fanSpeedList != null
-                && !channelConfiguration.fanSpeedList.isEmpty()) {
+        final var fanSpeedList = channelConfiguration.fanSpeedList;
+        if (deviceSupportedFeatures.contains(FEATURE_FAN_SPEED) && fanSpeedList != null
+                && !fanSpeedList.isEmpty()) {
+            if (!fanSpeedList.contains(OFF)) {
+                fanSpeedList.add(OFF); // Off value is used when cleaning if OFF
+            }
+            var fanSpeedValue = new TextValue(fanSpeedList.toArray(new String[0]));
             if (channelConfiguration.schema == Schema.LEGACY) {
-                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+                buildOptionalChannel(FAN_SPEED_CH_ID, fanSpeedValue,
                         updateListener, null, channelConfiguration.setFanSpeedTopic,
                         channelConfiguration.fanSpeedTemplate, channelConfiguration.fanSpeedTopic);
-            } else if (deviceFeatures.contains(FEATURE_STATUS)) {
-                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+            } else if (deviceSupportedFeatures.contains(FEATURE_STATUS)) {
+                buildOptionalChannel(FAN_SPEED_CH_ID, fanSpeedValue,
                         updateListener, null, channelConfiguration.setFanSpeedTopic,
                         "{{ value_json.fan_speed }}", channelConfiguration.stateTopic);
             } else {
                 LOGGER.info("Status feature is disabled, unable to get fan speed.");
-                buildOptionalChannel(FAN_SPEED_CH_ID, new TextValue(channelConfiguration.fanSpeedList.toArray(new String[0])),
+                buildOptionalChannel(FAN_SPEED_CH_ID, fanSpeedValue,
                         updateListener, null, channelConfiguration.setFanSpeedTopic,
                         null, null);
             }
         }
 
-        if (deviceFeatures.contains(FEATURE_SEND_COMMAND)) {
+        if (deviceSupportedFeatures.contains(FEATURE_SEND_COMMAND)) {
             buildOptionalChannel(CUSTOM_COMMAND_CH_ID, new TextValue(), updateListener, null,
                     channelConfiguration.sendCommandTopic, null, null);
         }
 
         if (channelConfiguration.schema == Schema.LEGACY) {
-            // I assume, that if when these topic defined in config, then we dont need to check features
+            // I assume, that if these topics defined in config, then we don't need to check features
             buildOptionalChannel(BATTERY_LEVEL_CH_ID, new PercentageValue(BigDecimal.ZERO, BigDecimal.valueOf(100),
                             BigDecimal.ONE, null, null),
                     updateListener, null, null,
@@ -268,7 +275,7 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
                     updateListener, null, null,
                     channelConfiguration.errorTemplate, channelConfiguration.errorTopic);
         } else {
-            if (deviceFeatures.contains(FEATURE_STATUS)) {
+            if (deviceSupportedFeatures.contains(FEATURE_STATUS)) {
                 // state key is mandatory
                 buildOptionalChannel(STATE_CH_ID,
                         new TextValue(new String[]{
@@ -280,7 +287,7 @@ public class Vacuum extends AbstractComponent<Vacuum.ChannelConfiguration> {
                                 STATE_ERROR}),
                         updateListener, null, null,
                         "{{ value_json.state }}", channelConfiguration.stateTopic);
-                if (deviceFeatures.contains(FEATURE_BATTERY)) {
+                if (deviceSupportedFeatures.contains(FEATURE_BATTERY)) {
                     buildOptionalChannel(BATTERY_LEVEL_CH_ID,
                             new PercentageValue(BigDecimal.ZERO, BigDecimal.valueOf(100), BigDecimal.ONE, null, null),
                             updateListener, null, null,
