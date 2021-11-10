@@ -189,6 +189,15 @@ public class VacuumTests extends AbstractComponentTests {
 
         assertThat(component.channels.size(), is(8)); //command, battery, charging, cleaning, docked, error,
                                                             // fan speed, send command
+        assertThat(component.getName(), is("Rockrobo"));
+        assertChannel(component, Vacuum.COMMAND_CH_ID, "", "vacuum/command", "Rockrobo", TextValue.class);
+        assertChannel(component, Vacuum.BATTERY_LEVEL_CH_ID, "vacuum/state", "", "Rockrobo", PercentageValue.class);
+        assertChannel(component, Vacuum.CHARGING_CH_ID, "vacuum/state", "", "Rockrobo", OnOffValue.class);
+        assertChannel(component, Vacuum.CLEANING_CH_ID, "vacuum/state", "", "Rockrobo", OnOffValue.class);
+        assertChannel(component, Vacuum.DOCKED_CH_ID, "vacuum/state", "", "Rockrobo", OnOffValue.class);
+        assertChannel(component, Vacuum.ERROR_CH_ID, "vacuum/state", "", "Rockrobo", TextValue.class);
+        assertChannel(component, Vacuum.FAN_SPEED_CH_ID, "vacuum/state", "vacuum/set_fan_speed", "Rockrobo", TextValue.class);
+        assertChannel(component, Vacuum.CUSTOM_COMMAND_CH_ID, "", "vacuum/send_command", "Rockrobo", TextValue.class);
 
         // @formatter:off
         publishMessage("vacuum/state", "{" +
@@ -208,6 +217,32 @@ public class VacuumTests extends AbstractComponentTests {
         assertState(component, Vacuum.FAN_SPEED_CH_ID, new StringType("off"));
         assertState(component, Vacuum.ERROR_CH_ID, new StringType("Error message"));
 
+        component.getChannel(Vacuum.COMMAND_CH_ID).getState().publishValue(new StringType("turn_on"));
+        assertPublished("vacuum/command", "turn_on");
+
+        // @formatter:off
+        publishMessage("vacuum/state", "{" +
+                "\"battery_level\": 55," +
+                "\"docked\": false," +
+                "\"cleaning\": true," +
+                "\"charging\": false," +
+                "\"fan_speed\": \"medium\"," +
+                "\"error\": \"\"" +
+                "}");
+        // @formatter:on
+
+        assertState(component, Vacuum.BATTERY_LEVEL_CH_ID, new PercentType(55));
+        assertState(component, Vacuum.DOCKED_CH_ID, OnOffType.OFF);
+        assertState(component, Vacuum.CLEANING_CH_ID, OnOffType.ON);
+        assertState(component, Vacuum.CHARGING_CH_ID, OnOffType.OFF);
+        assertState(component, Vacuum.FAN_SPEED_CH_ID, new StringType("medium"));
+        assertState(component, Vacuum.ERROR_CH_ID, new StringType(""));
+
+        component.getChannel(Vacuum.FAN_SPEED_CH_ID).getState().publishValue(new StringType("high"));
+        assertPublished("vacuum/set_fan_speed", "high");
+
+        component.getChannel(Vacuum.CUSTOM_COMMAND_CH_ID).getState().publishValue(new StringType("custom_command"));
+        assertPublished("vacuum/send_command", "custom_command");
     }
 
     protected Set<String> getConfigTopics() {
